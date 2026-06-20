@@ -73,23 +73,34 @@ def _sparkline(path) -> str:
 
 # ---- forecast (Kronos sidecar) ------------------------------------------
 def _forecast(query: str) -> dict:
-    """Hit the sidecar's on-demand endpoint. Retries once (cold service / warming)."""
+    """Hit the sidecar's on-demand endpoint, patiently waiting out a GPU cold start.
+
+    A scaled-to-zero sidecar can take ~30-90s to boot the container + load the model.
+    During that window it either returns {"status":"warming"} or the socket hangs.
+    We poll for up to ~100s before giving up so the first request after idle still
+    returns a real forecast instead of a spurious failure.
+    """
     if not KRONOS_URL:
         return {"ok": False, "error": "sidecar URL not set"}
     url = KRONOS_URL + "/forecast/symbol?" + urllib.parse.urlencode({"q": query})
-    last = {"ok": False, "error": "unreachable"}
-    for _ in range(2):
+    deadline = time.time() + 100.0
+    last = {"ok": False, "status": "warming", "error": "unreachable"}
+    attempt = 0
+    while time.time() < deadline:
+        attempt += 1
         try:
-            data = json.loads(_get(url, timeout=40).decode())
+            data = json.loads(_get(url, timeout=25).decode())
             if data.get("ok"):
                 return data
             last = data
-            # warming -> wait and retry; hard errors -> return immediately
+            # Hard errors (could-not-resolve, etc.) -> return immediately.
+            # Only "warming" is worth waiting on.
             if data.get("status") != "warming":
                 return data
         except Exception as e:
-            last = {"ok": False, "error": str(e)}
-        time.sleep(2.0)
+            # Timeout/hang during container boot looks like an exception; keep waiting.
+            last = {"ok": False, "status": "warming", "error": str(e)}
+        time.sleep(min(8.0, 3.0 + attempt))
     return last
 
 

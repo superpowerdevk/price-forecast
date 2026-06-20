@@ -5,33 +5,39 @@ description: Kronos-powered price forecast for ANY asset — stocks, ETFs, indic
 
 # price-forecast — Kronos forecast for any asset
 
-The user names an asset in plain language; you return a Kronos-backed forecast card plus a headline read. This works across asset classes through a multi-source resolver: **stocks, ETFs, indices, FX pairs, commodities/futures, and crypto.**
+The user names an asset in plain language; you return a Kronos-backed forecast card plus a headline read. Coverage spans **US stocks/ETFs/indices, FX, commodities, crypto, Chinese A-shares (Shanghai & Shenzhen), and Hong Kong stocks** — including assets named in **Chinese** (e.g. 贵州茅台), by pinyin, or by numeric code (`600519`, `0700.HK`).
 
 > Descriptive, never advice. The forecast is a model estimate over daily candles — present it as a probability, never a guarantee, never a buy/sell call.
 
 ## FIRST ACTION (on invoke — do this immediately)
 
-1. **Identify the asset the user named.** Pass it through verbatim — a name ("Apple", "gold", "S&P 500") or a ticker (`AAPL`, `BTC-USD`, `^GSPC`, `GC=F`, `EURUSD=X`). Don't pre-guess the ticker; the script resolves it.
-2. **Run the forecast:** `python3 forecast.py "<what the user named>"` (in this skill's directory). It prints, keyless:
-   - a **forecast card** — resolved name + symbol + asset class, live spot, directional lean with conviction %, expected close (+%) and range over the horizon, **move odds** (probability of touching ±~1σ within the horizon), and a forecast-path sparkline,
-   - raw headlines for that asset, plus the exact format to render the rest.
-3. **Show the card, then build the rest.** Print everything above the `[AGENT INSTRUCTIONS]` line **AS-IS as Markdown** — each line on its own line, no code block, no rewording. The dot + arrow are the **directional lean** (🟢 bullish ↑ / 🔴 bearish ↓ / 🟡 neutral), the `%` is Kronos's **close conviction** over the horizon, `~price` is its **expected close**, and the **move odds** are the chance of touching the ±X% level within the window. Then follow the embedded instructions to add **### 📰 Headlines** (tag each 🟢/🔴/⚪ and ALWAYS keep the color key in the header), **### ⚖️ Read** (bold Bullish/Bearish/Mixed lead + one short paragraph grounded in the lean, move odds, and headlines + a Conviction badge), and **### 👉 What now?**. Never invent or alter a number from the card.
+1. **Take the user's asset EXACTLY as they wrote it** — an English name ("Apple", "gold"), a ticker (`AAPL`, `BTC-USD`, `^GSPC`), a **Chinese name** (`贵州茅台`), pinyin (`maotai`), an **A-share code** (`600519`), or a **HK code** (`0700.HK`). Do **not** translate it, romanize it, or guess a ticker yourself — the script resolves it server-side.
+2. **Run the forecast exactly once:** `python3 forecast.py "<the user's exact input>"` (in this skill's directory). Run it **one time**. Do **not** re-run it with alternate ticker formats, translations, or guesses.
+3. **Print the card verbatim.** Everything above the `[AGENT INSTRUCTIONS]` line is the card — print it AS-IS as Markdown (each line on its own line, no code block, no rewording, no reordering, never alter a number). The dot + arrow are the **directional lean** (🟢 bullish ↑ / 🔴 bearish ↓ / 🟡 neutral), the `%` is Kronos's **close conviction**, `~price` is the **expected close**, and **move odds** are the chance of touching the ±X% level within the window. Then follow the embedded instructions to add **### 📰 Headlines** (tag each 🟢/🔴/⚪, keep the color key in the header), **### ⚖️ Read** (bold Bullish/Bearish/Mixed lead + one short paragraph grounded in the lean, move odds, and headlines + a Conviction badge), and **### 👉 What now?**.
+
+## CRITICAL — never improvise around the script
+
+These rules override everything else. The script is the single source of truth.
+
+- **Run it once, print what it returns.** If the script returns an error or offline card, print THAT card verbatim. Do **not** re-run with different inputs, and do **not** write your own explanation of why it failed.
+- **Never claim an asset or market "isn't supported" or "isn't covered."** This skill covers Chinese A-shares, Hong Kong, US, FX, commodities, and crypto. Do **not** tell the user to use ADRs (BABA/JD/NIO), indices, or any workaround — that advice is wrong and forbidden.
+- **"warming" just means the model is spinning up.** If the card says the model is warming/unavailable, tell the user plainly: "the forecast model is spinning up — ask again in a few seconds." Nothing is broken. Do not editorialize or invent a cause.
+- **Never fabricate** a number, a ticker, a forecast, or a reason. If it's not in the script's output, it doesn't go in your reply.
 
 ## How the forecast works (so you can explain it)
 
-- The asset is resolved to a real symbol, then ~2 years of **daily** candles are pulled and fed to **Kronos** (a foundation model trained on candlestick data across 45+ exchanges and many asset classes).
-- Kronos is sampled ~20 times to generate independent forward paths over the horizon (default ~5 trading days). From those paths the sidecar computes: **close conviction** (share of paths closing above spot), **expected close/high/low**, and **move odds** (share of paths whose high/low touches a ±~1σ level scaled to the asset's own volatility).
-- Daily candles are used so the same logic works identically for 24/7 crypto and market-hours stocks. Horizon is in **trading days**, so a stock's ~5d ≈ one week.
+- The asset is resolved to a real symbol, then ~2 years of **daily** candles are pulled and fed to **Kronos** (a foundation model trained on candlestick data across many exchanges and asset classes).
+- Kronos is sampled ~20 times to generate independent forward paths over the horizon (default ~5 trading days). From those paths the sidecar computes **close conviction** (share of paths closing above spot), **expected close/high/low**, and **move odds** (share of paths touching a ±~1σ level scaled to the asset's own volatility).
+- Daily candles mean the same logic works for 24/7 crypto and market-hours stocks alike. Horizon is in **trading days**, so ~5d ≈ one week.
 
 ## Hard rules
 
-- **Forecast-only.** This skill never holds funds, never places trades, never holds keys. It only reads data and forecasts.
-- **Not investment advice.** The forecast is a model estimate; no outcome is guaranteed; the user bears all risk. Keep everything descriptive — no buy/sell calls, no price targets beyond the numbers the script printed.
-- **Never fabricate.** Use only the numbers the script prints. If a value is n/a — sidecar warming, asset unresolved, no candles — say so plainly and offer to retry or try another asset. Don't invent a forecast.
-- If the user names something ambiguous (e.g. "gold" could be the metal, a miner, or an ETF), the card shows the **resolved name + symbol** — if it picked the wrong one, tell the user and suggest a more specific ticker.
+- **Forecast-only.** Never holds funds, never places trades, never holds keys. It only reads data and forecasts.
+- **Not investment advice.** A model estimate; no outcome guaranteed; the user bears all risk. No buy/sell calls, no price targets beyond the numbers the script printed.
+- If the user names something ambiguous, the card shows the **resolved name + symbol** — if it picked the wrong one, point that out and suggest a more specific code/ticker. Don't silently substitute.
 
 ## Dependencies & notes
 
-- **Kronos sidecar:** forecasts come from the shared Kronos sidecar (same service the trader skill uses). The script defaults to the live URL; override with `KRONOS_URL` (env) if self-hosting. The new on-demand endpoint is `GET /forecast/symbol?q=<asset>`.
-- **First call after an idle/deploy may be slow** (model warm-up + first inference on CPU); the script retries once and reports "warming" if it's not ready. Repeat forecasts for the same symbol are cached server-side (~10 min) and return instantly.
-- All data is keyless: Stooq (stocks/ETF/index/FX/commodity candles), Hyperliquid + CoinGecko (crypto), SEC directory (company name -> ticker), Google News RSS (headlines), Kronos (forecast). No API keys anywhere.
+- **Kronos sidecar (Modal GPU):** forecasts come from the GPU-hosted Kronos sidecar. The script targets it by default; override with `KRONOS_URL` (env) if self-hosting. Endpoint: `GET /forecast/symbol?q=<asset>`.
+- **Cold starts:** if the sidecar has been idle it may take ~30–90s to spin up; the script waits this out automatically and only reports "warming" if it's still not ready. Repeat forecasts for the same symbol are cached (~10 min) and return instantly.
+- **Data sources (all server-side):** FMP (US stocks/ETF/index/FX/commodity), EastMoney (Chinese A-share + HK, incl. Chinese-name/pinyin/code resolution), Hyperliquid + CoinGecko (crypto), SEC directory (US name→ticker), Google News RSS (headlines), Kronos (forecast).
