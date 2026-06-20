@@ -31,7 +31,7 @@ import urllib.request
 import xml.etree.ElementTree as ET
 
 KRONOS_URL = os.environ.get(
-    "KRONOS_URL", "https://superclaw-kronos-sidecar.onrender.com"
+    "KRONOS_URL", "https://devansh-86031--superclaw-kronos-serve.modal.run"
 ).rstrip("/")
 GOOGLE_NEWS = "https://news.google.com/rss/search"
 
