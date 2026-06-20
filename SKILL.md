@@ -5,7 +5,7 @@ description: Kronos-powered price forecast for ANY asset — stocks, ETFs, indic
 
 # price-forecast — Kronos forecast for any asset
 
-The user names an asset in plain language; you return a Kronos-backed forecast card plus a headline read. This works across asset classes through one universal resolver (Yahoo): **stocks, ETFs, indices, FX pairs, commodities/futures, and crypto.**
+The user names an asset in plain language; you return a Kronos-backed forecast card plus a headline read. This works across asset classes through a multi-source resolver: **stocks, ETFs, indices, FX pairs, commodities/futures, and crypto.**
 
 > Descriptive, never advice. The forecast is a model estimate over daily candles — present it as a probability, never a guarantee, never a buy/sell call.
 
@@ -34,4 +34,4 @@ The user names an asset in plain language; you return a Kronos-backed forecast c
 
 - **Kronos sidecar:** forecasts come from the shared Kronos sidecar (same service the trader skill uses). The script defaults to the live URL; override with `KRONOS_URL` (env) if self-hosting. The new on-demand endpoint is `GET /forecast/symbol?q=<asset>`.
 - **First call after an idle/deploy may be slow** (model warm-up + first inference on CPU); the script retries once and reports "warming" if it's not ready. Repeat forecasts for the same symbol are cached server-side (~10 min) and return instantly.
-- All data is keyless: Yahoo (resolve + candles), Google News RSS (headlines), Kronos (forecast). No API keys anywhere.
+- All data is keyless: Stooq (stocks/ETF/index/FX/commodity candles), Hyperliquid + CoinGecko (crypto), SEC directory (company name -> ticker), Google News RSS (headlines), Kronos (forecast). No API keys anywhere.
