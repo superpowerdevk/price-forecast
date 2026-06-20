@@ -158,6 +158,131 @@ def _offline_card(query: str, data: dict) -> str:
             "Offer to try another asset or retry in a moment.")
 
 
+# ---- SVG forecast terminal (self-contained, renders inline in SuperClaw) ----
+def _esc(s) -> str:
+    return (str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
+
+
+def _ccy_fmt(ccy: str, v: float) -> str:
+    if abs(v) >= 100:
+        s = f"{v:,.0f}"
+    elif abs(v) >= 1:
+        s = f"{v:,.2f}"
+    else:
+        s = f"{v:.4f}"
+    return f"{ccy}{s}"
+
+
+def _svg_card(d: dict):
+    """Dark, self-contained SVG forecast terminal. Returns an SVG string, or None
+    if the payload lacks the chart data (old sidecar) so the caller can fall back."""
+    hc = d.get("hist_c") or []
+    b = d.get("bands") or {}
+    if len(hc) < 10 or not b.get("p50"):
+        return None
+    ccy = d.get("ccy", "$")
+    up = d.get("direction") == "up"
+    acc = "#3fb950" if up else "#f85149"
+    acc_dim = "rgba(63,185,80,0.16)" if up else "rgba(248,81,73,0.16)"
+    acc_mid = "rgba(63,185,80,0.30)" if up else "rgba(248,81,73,0.30)"
+    spot = float(d["spot"])
+    nh, nf = len(hc), len(b["p50"])
+    nx = nh + nf
+    allv = hc + b["p10"] + b["p90"] + [spot]
+    ymin, ymax = min(allv), max(allv)
+    pad = (ymax - ymin) * 0.08 or 1.0
+    ymin -= pad
+    ymax += pad
+    X0, XW, Y0, YH = 56, 588, 92, 196
+
+    def px(i):
+        return X0 + (i / (nx - 1)) * XW
+
+    def py(v):
+        return Y0 + (ymax - v) / (ymax - ymin) * YH
+
+    hpts = " ".join(f"{px(i):.1f},{py(hc[i]):.1f}" for i in range(nh))
+    jx, jy = px(nh - 1), py(spot)
+
+    def cone(lo, hi):
+        up_pts = [(jx, jy)] + [(px(nh + i), py(hi[i])) for i in range(nf)]
+        dn_pts = [(px(nh + i), py(lo[i])) for i in range(nf - 1, -1, -1)] + [(jx, jy)]
+        return " ".join(f"{x:.1f},{y:.1f}" for x, y in up_pts + dn_pts)
+
+    outer = cone(b["p10"], b["p90"])
+    inner = cone(b["p25"], b["p75"])
+    mpts = f"{jx:.1f},{jy:.1f} " + " ".join(
+        f"{px(nh + i):.1f},{py(b['p50'][i]):.1f}" for i in range(nf))
+
+    grid = ""
+    for k in range(4):
+        gv = ymin + (ymax - ymin) * (k + 0.5) / 4
+        gy = py(gv)
+        grid += (f'<line x1="{X0}" y1="{gy:.1f}" x2="{X0 + XW}" y2="{gy:.1f}" '
+                 f'stroke="#1c2128" stroke-width="0.5"/>'
+                 f'<text x="{X0 - 8}" y="{gy + 3:.1f}" fill="#6e7681" font-size="11" '
+                 f'text-anchor="end">{ccy}{gv:,.0f}</text>')
+    nowx, spoty = px(nh - 1), py(spot)
+    conv = d["prob_up"] if up else 100 - d["prob_up"]
+    arr = "▲" if up else "▼"
+
+    tiles = [
+        ("Conviction", f"{conv}% {arr}", acc),
+        ("Exp. close", _ccy_fmt(ccy, d["exp_close"]), "#e6edf3"),
+        (f"{nf}d range", f"{_ccy_fmt(ccy, d['exp_low'])}–{d['exp_high']:,.0f}", "#e6edf3"),
+        ("Move odds", f"▲{d['odds_up_move']}% ▼{d['odds_dn_move']}%", "#c9d1d9"),
+    ]
+    tw, tg, tx0, ty = 140, 10, 56, 322
+    tiles_svg = ""
+    for i, (lab, val, col) in enumerate(tiles):
+        x = tx0 + i * (tw + tg)
+        tiles_svg += (
+            f'<rect x="{x}" y="{ty}" width="{tw}" height="56" rx="8" fill="#0f141a" '
+            f'stroke="#1f2630" stroke-width="0.5"/>'
+            f'<text x="{x + 12}" y="{ty + 22}" fill="#8b949e" font-size="11">{_esc(lab)}</text>'
+            f'<text x="{x + 12}" y="{ty + 42}" fill="{col}" font-size="15" '
+            f'font-weight="600">{_esc(val)}</text>')
+
+    name = _esc(d["name"])
+    sym = _esc(d["symbol"])
+    typ = (d.get("type", "") or "").replace("_", "-").title()
+    sub = _esc(typ + (f" · {d['exchange']}" if d.get("exchange") else ""))
+    badge = "Bullish" if up else "Bearish"
+    H = 398
+    return (
+        f'<svg width="100%" viewBox="0 0 700 {H}" xmlns="http://www.w3.org/2000/svg" '
+        f'role="img" font-family="ui-sans-serif,system-ui">'
+        f'<title>{name} Kronos forecast</title>'
+        f'<desc>{nf}-day Kronos price forecast for {name}, {badge}, '
+        f'spot {_ccy_fmt(ccy, spot)}, expected close {_ccy_fmt(ccy, d["exp_close"])}.</desc>'
+        f'<rect x="0.5" y="0.5" width="699" height="{H - 1}" rx="14" fill="#0d1117" stroke="#1f2630"/>'
+        f'<text x="28" y="38" fill="#e6edf3" font-size="20" font-weight="600">{name}</text>'
+        f'<text x="28" y="60" fill="#8b949e" font-size="12">{sym} · {sub}</text>'
+        f'<text x="672" y="36" fill="#e6edf3" font-size="22" font-weight="600" '
+        f'text-anchor="end">{_ccy_fmt(ccy, spot)}</text>'
+        f'<rect x="588" y="46" width="84" height="22" rx="11" fill="{acc_dim}"/>'
+        f'<text x="630" y="61" fill="{acc}" font-size="12" font-weight="600" '
+        f'text-anchor="middle">{arr} {badge}</text>'
+        f'{grid}'
+        f'<polygon points="{outer}" fill="{acc_dim}"/>'
+        f'<polygon points="{inner}" fill="{acc_mid}"/>'
+        f'<polyline points="{hpts}" fill="none" stroke="#58a6ff" stroke-width="1.6"/>'
+        f'<line x1="{X0}" y1="{spoty:.1f}" x2="{X0 + XW}" y2="{spoty:.1f}" '
+        f'stroke="#6e7681" stroke-width="0.7" stroke-dasharray="3 3"/>'
+        f'<line x1="{nowx:.1f}" y1="{Y0}" x2="{nowx:.1f}" y2="{Y0 + YH}" '
+        f'stroke="#30363d" stroke-width="0.7" stroke-dasharray="2 3"/>'
+        f'<polyline points="{mpts}" fill="none" stroke="{acc}" stroke-width="2" '
+        f'stroke-dasharray="5 3"/>'
+        f'<text x="{nowx - 6:.0f}" y="{Y0 + YH + 16}" fill="#6e7681" font-size="11" '
+        f'text-anchor="end">now</text>'
+        f'<text x="{X0 + XW}" y="{Y0 + YH + 16}" fill="#6e7681" font-size="11" '
+        f'text-anchor="end">+{nf}d forecast</text>'
+        f'{tiles_svg}'
+        f'<text x="28" y="388" fill="#6e7681" font-size="11">Kronos · {nf}-day '
+        f'probabilistic forecast · not advice. Shaded band = 10–90% range.</text>'
+        f'</svg>')
+
+
 def cmd_forecast(query: str) -> None:
     data = _safe(_forecast, query) or {"ok": False, "error": "unreachable"}
     if not data.get("ok"):
@@ -217,18 +342,33 @@ def cmd_forecast(query: str) -> None:
         L.append(f"**Forecast path:** {spark}")
     L += ["", "_Probabilistic estimate from Kronos over daily candles — not advice, "
           "not a guarantee. Markets gap on news the model can't see._"]
-    card = "\n".join(L)
+    text_card = "\n".join(L)
+
+    # Prefer the visual SVG terminal; fall back to the text card if the sidecar
+    # didn't return chart data (older build) or there aren't enough candles.
+    svg = _safe(_svg_card, data)
+    card = svg if svg else text_card
+    is_svg = bool(svg)
 
     headlines = _news(name, sym) or []
     hl_block = "\n".join(f"- {h}" for h in headlines) if headlines \
         else "- (no recent headlines fetched)"
 
+    card_directive = (
+        ("Everything ABOVE this line is the forecast card, as an inline SVG. Output it AS-IS, "
+         "exactly once, as a raw inline HTML/SVG block — do NOT wrap it in a code fence, do NOT "
+         "escape it, do NOT describe or redraw it, and do NOT add a separate text version of the "
+         "numbers. It is the chart.")
+        if is_svg else
+        ("Everything ABOVE this line is the forecast card. Print it AS-IS as Markdown — keep each "
+         "line on its OWN line, do not wrap in a code block, do not reword or reorder. The spot, "
+         "odds, expected close/range and path are FINAL — never invent or change a number.")
+    )
+
     instructions = (
         "\n\n[AGENT INSTRUCTIONS — do not print this line]\n"
-        "Everything ABOVE this line is the forecast card. Print it AS-IS as Markdown — keep "
-        "each line on its OWN line, do not wrap in a code block, do not reword or reorder. The "
-        "spot, odds, expected close/range and path are FINAL — never invent or change a number.\n\n"
-        "Then build the rest yourself:\n\n"
+        f"{card_directive}\n\n"
+        "Then build the rest yourself, BELOW the card:\n\n"
         "RAW HEADLINES (tag each by likely impact on THIS asset — 🟢 bullish / 🔴 bearish / "
         "⚪ neutral):\n"
         f"{hl_block}\n\n"
