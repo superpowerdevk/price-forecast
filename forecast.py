@@ -173,114 +173,144 @@ def _ccy_fmt(ccy: str, v: float) -> str:
     return f"{ccy}{s}"
 
 
+def _sentiment_score(headlines):
+    """Lightweight keyword sentiment from the real headlines. 0-100, 50 = neutral."""
+    if not headlines:
+        return 50
+    bull = ("surge", "rise", "rises", "gain", "gains", "beat", "beats", "high", "jump", "jumps",
+            "rally", "upgrade", "growth", "record", "soar", "soars", "climb", "climbs", "boost",
+            "strong", "wins", "outperform", "raise", "raises", "hike")
+    bear = ("fall", "falls", "drop", "drops", "decline", "declines", "miss", "misses", "loss",
+            "losses", "cut", "cuts", "plunge", "plunges", "slump", "downgrade", "weak", "warn",
+            "warns", "fear", "selloff", "sell-off", "sinks", "tumble", "tumbles", "crash",
+            "lawsuit", "probe", "retreat", "retreats")
+    b = s = 0
+    for h in headlines:
+        hl = h.lower()
+        b += sum(1 for w in bull if w in hl)
+        s += sum(1 for w in bear if w in hl)
+    if b + s == 0:
+        return 50
+    return int(max(8, min(92, round(50 + 42 * (b - s) / (b + s)))))
+
+
+def _composite_confidence(scores, sentiment):
+    """Transparent blend of the four gauges, capped under 95 (never certainty)."""
+    d = scores.get("direction", 50); m = scores.get("momentum", 50); r = scores.get("risk", 50)
+    conf = 0.45 * d + 0.25 * m + 0.30 * sentiment - 0.25 * (r - 50)
+    return int(max(0, min(95, round(conf))))
+
+
+def _gauge_svg(cx, cy, score, label, tag, kind):
+    import math
+    if kind == "risk":
+        col = "#3fb950" if score < 40 else ("#d29922" if score < 65 else "#f85149")
+    else:
+        col = "#f85149" if score < 40 else ("#d29922" if score < 60 else "#3fb950")
+    def pol(a):
+        rad = math.radians(a); return cx + 26 * math.cos(rad), cy + 26 * math.sin(rad)
+    def ap(a0, a1):
+        x0, y0 = pol(a0); x1, y1 = pol(a1); lg = 1 if (a1 - a0) % 360 > 180 else 0
+        return f"M {x0:.1f} {y0:.1f} A 26 26 0 {lg} 1 {x1:.1f} {y1:.1f}"
+    return (f'<path d="{ap(135, 135 + 270)}" fill="none" stroke="#21262d" stroke-width="5.5" stroke-linecap="round"/>'
+            f'<path d="{ap(135, 135 + 270 * score / 100)}" fill="none" stroke="{col}" stroke-width="5.5" stroke-linecap="round"/>'
+            f'<text x="{cx}" y="{cy + 5:.0f}" fill="#e6edf3" font-size="16" font-weight="600" text-anchor="middle">{score}</text>'
+            f'<text x="{cx}" y="{cy + 44:.0f}" fill="#8b949e" font-size="11.5" text-anchor="middle">{label}</text>'
+            f'<text x="{cx}" y="{cy + 60:.0f}" fill="{col}" font-size="11" font-weight="600" text-anchor="middle">{tag}</text>')
+
+
 def _svg_card(d: dict):
-    """Dark, self-contained SVG forecast terminal. Returns an SVG string, or None
-    if the payload lacks the chart data (old sidecar) so the caller can fall back."""
-    hc = d.get("hist_c") or []
-    b = d.get("bands") or {}
-    if len(hc) < 10 or not b.get("p50"):
+    """Mobile-first forecast report (self-contained dark SVG). Returns SVG, or None
+    if the payload lacks chart data / scores (older sidecar) so caller falls back."""
+    ho = d.get("hist_o") or []; hh = d.get("hist_h") or []
+    hl = d.get("hist_l") or []; hc = d.get("hist_c") or []
+    b = d.get("bands") or {}; sc = d.get("scores") or {}
+    if len(hc) < 12 or not b.get("p50") or "direction" not in sc:
         return None
+    n = min(30, len(hc))
+    ho, hh, hl, hc = ho[-n:], hh[-n:], hl[-n:], hc[-n:]
     ccy = d.get("ccy", "$")
-    up = d.get("direction") == "up"
+    spot = float(d["spot"]); up = d["direction"] == "up"
     acc = "#3fb950" if up else "#f85149"
-    acc_dim = "rgba(63,185,80,0.16)" if up else "rgba(248,81,73,0.16)"
-    acc_mid = "rgba(63,185,80,0.30)" if up else "rgba(248,81,73,0.30)"
-    spot = float(d["spot"])
-    nh, nf = len(hc), len(b["p50"])
-    nx = nh + nf
-    allv = hc + b["p10"] + b["p90"] + [spot]
-    ymin, ymax = min(allv), max(allv)
-    pad = (ymax - ymin) * 0.08 or 1.0
-    ymin -= pad
-    ymax += pad
-    X0, XW, Y0, YH = 56, 588, 92, 196
-
-    def px(i):
-        return X0 + (i / (nx - 1)) * XW
-
-    def py(v):
-        return Y0 + (ymax - v) / (ymax - ymin) * YH
-
-    hpts = " ".join(f"{px(i):.1f},{py(hc[i]):.1f}" for i in range(nh))
-    jx, jy = px(nh - 1), py(spot)
-
-    def cone(lo, hi):
-        up_pts = [(jx, jy)] + [(px(nh + i), py(hi[i])) for i in range(nf)]
-        dn_pts = [(px(nh + i), py(lo[i])) for i in range(nf - 1, -1, -1)] + [(jx, jy)]
-        return " ".join(f"{x:.1f},{y:.1f}" for x, y in up_pts + dn_pts)
-
-    outer = cone(b["p10"], b["p90"])
-    inner = cone(b["p25"], b["p75"])
-    mpts = f"{jx:.1f},{jy:.1f} " + " ".join(
-        f"{px(nh + i):.1f},{py(b['p50'][i]):.1f}" for i in range(nf))
-
+    acc_dim = "rgba(63,185,80,0.18)" if up else "rgba(248,81,73,0.18)"
+    sig = d.get("signal", "Neutral")
+    sig_up = "buy" in sig.lower(); sig_dn = "sell" in sig.lower()
+    sig_col = "#3fb950" if sig_up else ("#f85149" if sig_dn else "#d29922")
+    sig_bg = ("rgba(63,185,80,0.14)" if sig_up else
+              ("rgba(248,81,73,0.14)" if sig_dn else "rgba(210,153,34,0.14)"))
+    conf = int(d.get("confidence", 50)); sent = int(d.get("sentiment", 50))
+    direction = int(sc["direction"]); momentum = int(sc["momentum"]); risk = int(sc["risk"])
+    p10, p50, p90 = b["p10"], b["p50"], b["p90"]; nf = len(p50)
+    X0, XW, Y0, YH = 34, 340, 142, 150
+    allv = hh + hl + p10 + p90
+    ymin, ymax = min(allv), max(allv); pad = (ymax - ymin) * 0.08 or 1.0; ymin -= pad; ymax += pad
+    HXW = XW * 0.60; FXW = XW * 0.40
+    hx = lambda i: X0 + (i / (n - 1)) * HXW
+    fx = lambda i: X0 + HXW + (i / nf) * FXW
+    py = lambda v: Y0 + (ymax - v) / (ymax - ymin) * YH
+    cw = HXW / n * 0.62
+    cs = ""
+    for i in range(n):
+        x = hx(i); col = "#3fb950" if hc[i] >= ho[i] else "#f85149"
+        yt = py(max(ho[i], hc[i])); yb = py(min(ho[i], hc[i]))
+        cs += (f'<line x1="{x:.1f}" y1="{py(hh[i]):.1f}" x2="{x:.1f}" y2="{py(hl[i]):.1f}" stroke="{col}" stroke-width="1"/>'
+               f'<rect x="{x - cw/2:.1f}" y="{yt:.1f}" width="{cw:.1f}" height="{max(1.2, yb - yt):.1f}" fill="{col}"/>')
+    jx, jy = hx(n - 1), py(spot)
+    cone = (f"{jx:.1f},{jy:.1f} " + " ".join(f"{fx(i+1):.1f},{py(p90[i]):.1f}" for i in range(nf))
+            + " " + " ".join(f"{fx(nf-i):.1f},{py(p10[nf-1-i]):.1f}" for i in range(nf)))
+    med = f"{jx:.1f},{jy:.1f} " + " ".join(f"{fx(i+1):.1f},{py(p50[i]):.1f}" for i in range(nf))
     grid = ""
-    for k in range(4):
-        gv = ymin + (ymax - ymin) * (k + 0.5) / 4
-        gy = py(gv)
-        grid += (f'<line x1="{X0}" y1="{gy:.1f}" x2="{X0 + XW}" y2="{gy:.1f}" '
-                 f'stroke="#1c2128" stroke-width="0.5"/>'
-                 f'<text x="{X0 - 8}" y="{gy + 3:.1f}" fill="#6e7681" font-size="11" '
-                 f'text-anchor="end">{ccy}{gv:,.0f}</text>')
-    nowx, spoty = px(nh - 1), py(spot)
-    conv = d["prob_up"] if up else 100 - d["prob_up"]
-    arr = "▲" if up else "▼"
-
-    tiles = [
-        ("Conviction", f"{conv}% {arr}", acc),
-        ("Exp. close", _ccy_fmt(ccy, d["exp_close"]), "#e6edf3"),
-        (f"{nf}d range", f"{_ccy_fmt(ccy, d['exp_low'])}–{d['exp_high']:,.0f}", "#e6edf3"),
-        ("Move odds", f"▲{d['odds_up_move']}% ▼{d['odds_dn_move']}%", "#c9d1d9"),
-    ]
-    tw, tg, tx0, ty = 140, 10, 56, 322
-    tiles_svg = ""
-    for i, (lab, val, col) in enumerate(tiles):
-        x = tx0 + i * (tw + tg)
-        tiles_svg += (
-            f'<rect x="{x}" y="{ty}" width="{tw}" height="56" rx="8" fill="#0f141a" '
-            f'stroke="#1f2630" stroke-width="0.5"/>'
-            f'<text x="{x + 12}" y="{ty + 22}" fill="#8b949e" font-size="11">{_esc(lab)}</text>'
-            f'<text x="{x + 12}" y="{ty + 42}" fill="{col}" font-size="15" '
-            f'font-weight="600">{_esc(val)}</text>')
-
-    name = _esc(d["name"])
-    sym = _esc(d["symbol"])
+    for kk in range(3):
+        gv = ymin + (ymax - ymin) * (kk + 0.5) / 3; gy = py(gv)
+        grid += (f'<line x1="{X0}" y1="{gy:.1f}" x2="{X0+XW}" y2="{gy:.1f}" stroke="#1c2128" stroke-width="0.5"/>'
+                 f'<text x="{X0-6}" y="{gy+3:.1f}" fill="#6e7681" font-size="11" text-anchor="end">{ccy}{gv:,.0f}</text>')
+    def rtag(s): return "Low" if s < 40 else ("Elevated" if s < 65 else "High")
+    def dtag(s): return "Weak" if s < 40 else ("Neutral" if s < 60 else "Strong")
+    def stag(s): return "Bearish" if s < 40 else ("Mixed" if s < 60 else "Bullish")
+    gauges = (_gauge_svg(108, 560, direction, "Direction", dtag(direction), "dir")
+              + _gauge_svg(285, 560, momentum, "Momentum", dtag(momentum), "mom")
+              + _gauge_svg(108, 672, risk, "Risk", rtag(risk), "risk")
+              + _gauge_svg(285, 672, sent, "Sentiment", stag(sent), "sent"))
+    def tile(x, y, lab, val, col):
+        return (f'<rect x="{x}" y="{y}" width="172" height="50" rx="8" fill="#0f141a" stroke="#1f2630" stroke-width="0.5"/>'
+                f'<text x="{x+12}" y="{y+20}" fill="#8b949e" font-size="11">{_esc(lab)}</text>'
+                f'<text x="{x+12}" y="{y+40}" fill="{col}" font-size="14.5" font-weight="600">{_esc(val)}</text>')
+    chg = d.get("exp_change_pct", 0.0); odds = d.get("prob_up_display", "—"); arrow = "▲" if up else "▼"
+    tiles = (tile(20, 344, "Spot", _ccy_fmt(ccy, spot), "#e6edf3")
+             + tile(200, 344, "Exp. close", f"{_ccy_fmt(ccy, d['exp_close'])} {chg:+.1f}%", acc)
+             + tile(20, 400, "Proj. range", f"{_ccy_fmt(ccy, d['exp_low'])}–{d['exp_high']:,.0f}", "#e6edf3")
+             + tile(200, 400, f"Odds ({nf}d)", f"{arrow} {odds} {'up' if up else 'dn'}", "#c9d1d9"))
+    name = _esc(d["name"]); sym = _esc(d["symbol"])
     typ = (d.get("type", "") or "").replace("_", "-").title()
-    sub = _esc(typ + (f" · {d['exchange']}" if d.get("exchange") else ""))
-    badge = "Bullish" if up else "Bearish"
-    H = 398
-    return (
-        f'<svg width="100%" viewBox="0 0 700 {H}" xmlns="http://www.w3.org/2000/svg" '
-        f'role="img" font-family="ui-sans-serif,system-ui">'
-        f'<title>{name} Kronos forecast</title>'
-        f'<desc>{nf}-day Kronos price forecast for {name}, {badge}, '
-        f'spot {_ccy_fmt(ccy, spot)}, expected close {_ccy_fmt(ccy, d["exp_close"])}.</desc>'
-        f'<rect x="0.5" y="0.5" width="699" height="{H - 1}" rx="14" fill="#0d1117" stroke="#1f2630"/>'
-        f'<text x="28" y="38" fill="#e6edf3" font-size="20" font-weight="600">{name}</text>'
-        f'<text x="28" y="60" fill="#8b949e" font-size="12">{sym} · {sub}</text>'
-        f'<text x="672" y="36" fill="#e6edf3" font-size="22" font-weight="600" '
-        f'text-anchor="end">{_ccy_fmt(ccy, spot)}</text>'
-        f'<rect x="588" y="46" width="84" height="22" rx="11" fill="{acc_dim}"/>'
-        f'<text x="630" y="61" fill="{acc}" font-size="12" font-weight="600" '
-        f'text-anchor="middle">{arr} {badge}</text>'
-        f'{grid}'
-        f'<polygon points="{outer}" fill="{acc_dim}"/>'
-        f'<polygon points="{inner}" fill="{acc_mid}"/>'
-        f'<polyline points="{hpts}" fill="none" stroke="#58a6ff" stroke-width="1.6"/>'
-        f'<line x1="{X0}" y1="{spoty:.1f}" x2="{X0 + XW}" y2="{spoty:.1f}" '
-        f'stroke="#6e7681" stroke-width="0.7" stroke-dasharray="3 3"/>'
-        f'<line x1="{nowx:.1f}" y1="{Y0}" x2="{nowx:.1f}" y2="{Y0 + YH}" '
-        f'stroke="#30363d" stroke-width="0.7" stroke-dasharray="2 3"/>'
-        f'<polyline points="{mpts}" fill="none" stroke="{acc}" stroke-width="2" '
-        f'stroke-dasharray="5 3"/>'
-        f'<text x="{nowx - 6:.0f}" y="{Y0 + YH + 16}" fill="#6e7681" font-size="11" '
-        f'text-anchor="end">now</text>'
-        f'<text x="{X0 + XW}" y="{Y0 + YH + 16}" fill="#6e7681" font-size="11" '
-        f'text-anchor="end">+{nf}d forecast</text>'
-        f'{tiles_svg}'
-        f'<text x="28" y="388" fill="#6e7681" font-size="11">Kronos · {nf}-day '
-        f'probabilistic forecast · not advice. Shaded band = 10–90% range.</text>'
-        f'</svg>')
+    sub = _esc(sym + (f" · {typ}" if typ else "") + (f" · {d['exchange']}" if d.get("exchange") else ""))
+    flag = (f'<text x="20" y="318" fill="#d29922" font-size="11.5">&#9888; {chg:+.1f}% in {nf}d is a large move — treat with caution</text>'
+            if d.get("large_move") else f'<text x="20" y="318" fill="#6e7681" font-size="11">history &#8594; {nf}-day forecast</text>')
+    H = 770
+    return (f'<svg width="100%" viewBox="0 0 390 {H}" xmlns="http://www.w3.org/2000/svg" role="img" font-family="ui-sans-serif,system-ui">'
+            f'<title>{name} Kronos forecast</title>'
+            f'<desc>{sig}, confidence {conf} of 100, spot {_ccy_fmt(ccy, spot)}, expected {_ccy_fmt(ccy, d["exp_close"])}.</desc>'
+            f'<rect x="0.5" y="0.5" width="389" height="{H-1}" rx="14" fill="#0d1117" stroke="#1f2630"/>'
+            f'<text x="20" y="30" fill="#e6edf3" font-size="17" font-weight="600">{name}</text>'
+            f'<text x="20" y="50" fill="#8b949e" font-size="11.5">{sub}</text>'
+            f'<text x="370" y="30" fill="#e6edf3" font-size="17" font-weight="600" text-anchor="end">{_ccy_fmt(ccy, spot)}</text>'
+            f'<rect x="20" y="66" width="190" height="32" rx="8" fill="{sig_bg}" stroke="{sig_col}44"/>'
+            f'<text x="115" y="87" fill="{sig_col}" font-size="14" font-weight="700" text-anchor="middle">{sig.upper()}</text>'
+            f'<text x="370" y="82" fill="#e6edf3" font-size="16" font-weight="600" text-anchor="end">{conf}<tspan fill="#6e7681" font-size="11">/100</tspan></text>'
+            f'<text x="370" y="96" fill="#8b949e" font-size="11" text-anchor="end">Confidence</text>'
+            f'<text x="20" y="126" fill="#8b949e" font-size="11.5">Price &#183; {nf}-day forecast</text>'
+            f'{grid}{cs}'
+            f'<polygon points="{cone}" fill="{acc_dim}"/>'
+            f'<line x1="{X0}" y1="{jy:.1f}" x2="{X0+XW}" y2="{jy:.1f}" stroke="#6e7681" stroke-width="0.6" stroke-dasharray="3 3"/>'
+            f'<line x1="{jx:.1f}" y1="{Y0}" x2="{jx:.1f}" y2="{Y0+YH}" stroke="#30363d" stroke-width="0.6" stroke-dasharray="2 3"/>'
+            f'<polyline points="{med}" fill="none" stroke="{acc}" stroke-width="2" stroke-dasharray="5 3"/>'
+            f'<text x="{jx-4:.0f}" y="{Y0+YH+14:.0f}" fill="#6e7681" font-size="11" text-anchor="end">now</text>'
+            f'{flag}'
+            f'<text x="20" y="340" fill="#8b949e" font-size="11.5" font-weight="500">Projected levels</text>'
+            f'{tiles}'
+            f'<text x="20" y="485" fill="#8b949e" font-size="11.5" font-weight="500">Analysis breakdown</text>'
+            f'{gauges}'
+            f'<text x="20" y="756" fill="#6e7681" font-size="10.8">Kronos estimate &#183; directional signal, NOT advice &#183; no leverage/stop recommended.</text>'
+            f'</svg>')
 
 
 def cmd_forecast(query: str) -> None:
@@ -344,21 +374,25 @@ def cmd_forecast(query: str) -> None:
           "not a guarantee. Markets gap on news the model can't see._"]
     text_card = "\n".join(L)
 
-    # Prefer the visual SVG terminal; fall back to the text card if the sidecar
-    # didn't return chart data (older build) or there aren't enough candles.
+    # Headlines first — sentiment feeds the report's 4th gauge + the composite confidence.
+    headlines = _news(name, sym) or []
+    hl_block = "\n".join(f"- {h}" for h in headlines) if headlines \
+        else "- (no recent headlines fetched)"
+    data["sentiment"] = _sentiment_score(headlines)
+    if data.get("scores"):
+        data["confidence"] = _composite_confidence(data["scores"], data["sentiment"])
+
+    # Prefer the visual SVG report; fall back to the text card if the sidecar
+    # didn't return chart data / scores (older build) or there aren't enough candles.
     svg = _safe(_svg_card, data)
     card = svg if svg else text_card
     is_svg = bool(svg)
 
-    headlines = _news(name, sym) or []
-    hl_block = "\n".join(f"- {h}" for h in headlines) if headlines \
-        else "- (no recent headlines fetched)"
-
     card_directive = (
-        ("Everything ABOVE this line is the forecast card, as an inline SVG. Output it AS-IS, "
+        ("Everything ABOVE this line is the forecast report, as an inline SVG. Output it AS-IS, "
          "exactly once, as a raw inline HTML/SVG block — do NOT wrap it in a code fence, do NOT "
          "escape it, do NOT describe or redraw it, and do NOT add a separate text version of the "
-         "numbers. It is the chart.")
+         "numbers. It is the report.")
         if is_svg else
         ("Everything ABOVE this line is the forecast card. Print it AS-IS as Markdown — keep each "
          "line on its OWN line, do not wrap in a code block, do not reword or reorder. The spot, "
