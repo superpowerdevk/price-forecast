@@ -22,6 +22,7 @@ Usage:
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import sys
@@ -286,7 +287,7 @@ def _svg_card(d: dict):
     flag = (f'<text x="20" y="318" fill="#d29922" font-size="11.5">&#9888; {chg:+.1f}% in {nf}d is a large move — treat with caution</text>'
             if d.get("large_move") else f'<text x="20" y="318" fill="#6e7681" font-size="11">history &#8594; {nf}-day forecast</text>')
     H = 770
-    return (f'<svg width="100%" viewBox="0 0 390 {H}" xmlns="http://www.w3.org/2000/svg" role="img" font-family="ui-sans-serif,system-ui">'
+    return (f'<svg width="390" height="{H}" viewBox="0 0 390 {H}" xmlns="http://www.w3.org/2000/svg" role="img" font-family="ui-sans-serif,system-ui">'
             f'<title>{name} Kronos forecast</title>'
             f'<desc>{sig}, confidence {conf} of 100, spot {_ccy_fmt(ccy, spot)}, expected {_ccy_fmt(ccy, d["exp_close"])}.</desc>'
             f'<rect x="0.5" y="0.5" width="389" height="{H-1}" rx="14" fill="#0d1117" stroke="#1f2630"/>'
@@ -384,15 +385,26 @@ def cmd_forecast(query: str) -> None:
 
     # Prefer the visual SVG report; fall back to the text card if the sidecar
     # didn't return chart data / scores (older build) or there aren't enough candles.
+    # SuperClaw chat renders markdown images of any size, but shows raw inline SVG
+    # over ~a few KB as escaped text. So deliver the report as a data-URI <img>.
     svg = _safe(_svg_card, data)
-    card = svg if svg else text_card
-    is_svg = bool(svg)
+    if svg:
+        b64 = base64.b64encode(svg.encode("utf-8")).decode("ascii")
+        alt = (str(data.get("name", "forecast"))
+               .replace("[", " ").replace("]", " ")
+               .replace("(", " ").replace(")", " ").strip()) or "forecast"
+        card = f"![{alt} forecast](data:image/svg+xml;base64,{b64})"
+        is_svg = True
+    else:
+        card = text_card
+        is_svg = False
 
     card_directive = (
-        ("Everything ABOVE this line is the forecast report, as an inline SVG. Output it AS-IS, "
-         "exactly once, as a raw inline HTML/SVG block — do NOT wrap it in a code fence, do NOT "
-         "escape it, do NOT describe or redraw it, and do NOT add a separate text version of the "
-         "numbers. It is the report.")
+        ("Everything ABOVE this line is the forecast report, delivered as a Markdown "
+         "image (a single ![...](data:image/svg+xml;base64,...) line). Output that line "
+         "AS-IS, exactly once — do NOT wrap it in a code fence, do NOT alter or truncate "
+         "the data URI, do NOT describe or redraw it, and do NOT add a separate text "
+         "version of the numbers. It is the report.")
         if is_svg else
         ("Everything ABOVE this line is the forecast card. Print it AS-IS as Markdown — keep each "
          "line on its OWN line, do not wrap in a code block, do not reword or reorder. The spot, "
