@@ -212,7 +212,7 @@ def _gauge_svg(cx, cy, score, label, tag, kind):
         rad = math.radians(a); return cx + 26 * math.cos(rad), cy + 26 * math.sin(rad)
     def ap(a0, a1):
         x0, y0 = pol(a0); x1, y1 = pol(a1); lg = 1 if (a1 - a0) % 360 > 180 else 0
-        return f"M {x0:.1f} {y0:.1f} A 26 26 0 {lg} 1 {x1:.1f} {y1:.1f}"
+        return f"M {x0:.0f} {y0:.0f} A 26 26 0 {lg} 1 {x1:.0f} {y1:.0f}"
     return (f'<path d="{ap(135, 135 + 270)}" fill="none" stroke="#21262d" stroke-width="5.5" stroke-linecap="round"/>'
             f'<path d="{ap(135, 135 + 270 * score / 100)}" fill="none" stroke="{col}" stroke-width="5.5" stroke-linecap="round"/>'
             f'<text x="{cx}" y="{cy + 5:.0f}" fill="#e6edf3" font-size="16" font-weight="600" text-anchor="middle">{score}</text>'
@@ -249,22 +249,19 @@ def _svg_card(d: dict):
     hx = lambda i: X0 + (i / (n - 1)) * HXW
     fx = lambda i: X0 + HXW + (i / nf) * FXW
     py = lambda v: Y0 + (ymax - v) / (ymax - ymin) * YH
-    cw = HXW / n * 0.62
-    cs = ""
-    for i in range(n):
-        x = hx(i); col = "#3fb950" if hc[i] >= ho[i] else "#f85149"
-        yt = py(max(ho[i], hc[i])); yb = py(min(ho[i], hc[i]))
-        cs += (f'<line x1="{x:.1f}" y1="{py(hh[i]):.1f}" x2="{x:.1f}" y2="{py(hl[i]):.1f}" stroke="{col}" stroke-width="1"/>'
-               f'<rect x="{x - cw/2:.1f}" y="{yt:.1f}" width="{cw:.1f}" height="{max(1.2, yb - yt):.1f}" fill="{col}"/>')
+    base_y = Y0 + YH
+    hist_pts = " ".join(f"{hx(i):.0f},{py(hc[i]):.0f}" for i in range(n))
+    cs = (f'<polygon points="{hist_pts} {hx(n-1):.0f},{base_y:.0f} {hx(0):.0f},{base_y:.0f}" fill="rgba(110,118,129,0.10)"/>'
+          f'<polyline points="{hist_pts}" fill="none" stroke="#768390" stroke-width="1.6"/>')
     jx, jy = hx(n - 1), py(spot)
-    cone = (f"{jx:.1f},{jy:.1f} " + " ".join(f"{fx(i+1):.1f},{py(p90[i]):.1f}" for i in range(nf))
-            + " " + " ".join(f"{fx(nf-i):.1f},{py(p10[nf-1-i]):.1f}" for i in range(nf)))
-    med = f"{jx:.1f},{jy:.1f} " + " ".join(f"{fx(i+1):.1f},{py(p50[i]):.1f}" for i in range(nf))
+    cone = (f"{jx:.0f},{jy:.0f} " + " ".join(f"{fx(i+1):.0f},{py(p90[i]):.0f}" for i in range(nf))
+            + " " + " ".join(f"{fx(nf-i):.0f},{py(p10[nf-1-i]):.0f}" for i in range(nf)))
+    med = f"{jx:.0f},{jy:.0f} " + " ".join(f"{fx(i+1):.0f},{py(p50[i]):.0f}" for i in range(nf))
     grid = ""
     for kk in range(3):
         gv = ymin + (ymax - ymin) * (kk + 0.5) / 3; gy = py(gv)
-        grid += (f'<line x1="{X0}" y1="{gy:.1f}" x2="{X0+XW}" y2="{gy:.1f}" stroke="#1c2128" stroke-width="0.5"/>'
-                 f'<text x="{X0-6}" y="{gy+3:.1f}" fill="#6e7681" font-size="11" text-anchor="end">{ccy}{gv:,.0f}</text>')
+        grid += (f'<line x1="{X0}" y1="{gy:.0f}" x2="{X0+XW}" y2="{gy:.0f}" stroke="#1c2128" stroke-width="0.5"/>'
+                 f'<text x="{X0-6}" y="{gy+3:.0f}" fill="#6e7681" font-size="11" text-anchor="end">{ccy}{gv:,.0f}</text>')
     def rtag(s): return "Low" if s < 40 else ("Elevated" if s < 65 else "High")
     def dtag(s): return "Weak" if s < 40 else ("Neutral" if s < 60 else "Strong")
     def stag(s): return "Bearish" if s < 40 else ("Mixed" if s < 60 else "Bullish")
@@ -287,7 +284,7 @@ def _svg_card(d: dict):
     flag = (f'<text x="20" y="318" fill="#d29922" font-size="11.5">&#9888; {chg:+.1f}% in {nf}d is a large move — treat with caution</text>'
             if d.get("large_move") else f'<text x="20" y="318" fill="#6e7681" font-size="11">history &#8594; {nf}-day forecast</text>')
     H = 770
-    return (f'<svg width="390" height="{H}" viewBox="0 0 390 {H}" xmlns="http://www.w3.org/2000/svg" role="img" font-family="ui-sans-serif,system-ui">'
+    return (f'<svg width="100%" viewBox="0 0 390 {H}" xmlns="http://www.w3.org/2000/svg" role="img" font-family="ui-sans-serif,system-ui">'
             f'<title>{name} Kronos forecast</title>'
             f'<desc>{sig}, confidence {conf} of 100, spot {_ccy_fmt(ccy, spot)}, expected {_ccy_fmt(ccy, d["exp_close"])}.</desc>'
             f'<rect x="0.5" y="0.5" width="389" height="{H-1}" rx="14" fill="#0d1117" stroke="#1f2630"/>'
@@ -301,8 +298,8 @@ def _svg_card(d: dict):
             f'<text x="20" y="126" fill="#8b949e" font-size="11.5">Price &#183; {nf}-day forecast</text>'
             f'{grid}{cs}'
             f'<polygon points="{cone}" fill="{acc_dim}"/>'
-            f'<line x1="{X0}" y1="{jy:.1f}" x2="{X0+XW}" y2="{jy:.1f}" stroke="#6e7681" stroke-width="0.6" stroke-dasharray="3 3"/>'
-            f'<line x1="{jx:.1f}" y1="{Y0}" x2="{jx:.1f}" y2="{Y0+YH}" stroke="#30363d" stroke-width="0.6" stroke-dasharray="2 3"/>'
+            f'<line x1="{X0}" y1="{jy:.0f}" x2="{X0+XW}" y2="{jy:.0f}" stroke="#6e7681" stroke-width="0.6" stroke-dasharray="3 3"/>'
+            f'<line x1="{jx:.0f}" y1="{Y0}" x2="{jx:.0f}" y2="{Y0+YH}" stroke="#30363d" stroke-width="0.6" stroke-dasharray="2 3"/>'
             f'<polyline points="{med}" fill="none" stroke="{acc}" stroke-width="2" stroke-dasharray="5 3"/>'
             f'<text x="{jx-4:.0f}" y="{Y0+YH+14:.0f}" fill="#6e7681" font-size="11" text-anchor="end">now</text>'
             f'{flag}'
@@ -388,23 +385,14 @@ def cmd_forecast(query: str) -> None:
     # SuperClaw chat renders markdown images of any size, but shows raw inline SVG
     # over ~a few KB as escaped text. So deliver the report as a data-URI <img>.
     svg = _safe(_svg_card, data)
-    if svg:
-        b64 = base64.b64encode(svg.encode("utf-8")).decode("ascii")
-        alt = (str(data.get("name", "forecast"))
-               .replace("[", " ").replace("]", " ")
-               .replace("(", " ").replace(")", " ").strip()) or "forecast"
-        card = f"![{alt} forecast](data:image/svg+xml;base64,{b64})"
-        is_svg = True
-    else:
-        card = text_card
-        is_svg = False
+    card = svg if svg else text_card
+    is_svg = bool(svg)
 
     card_directive = (
-        ("Everything ABOVE this line is the forecast report, delivered as a Markdown "
-         "image (a single ![...](data:image/svg+xml;base64,...) line). Output that line "
-         "AS-IS, exactly once — do NOT wrap it in a code fence, do NOT alter or truncate "
-         "the data URI, do NOT describe or redraw it, and do NOT add a separate text "
-         "version of the numbers. It is the report.")
+        ("Everything ABOVE this line is the forecast report, as an inline SVG. Output it AS-IS, "
+         "exactly once, as a raw inline SVG block — do NOT wrap it in a code fence, do NOT "
+         "escape it, do NOT describe or redraw it, and do NOT add a separate text version of the "
+         "numbers. It is the report.")
         if is_svg else
         ("Everything ABOVE this line is the forecast card. Print it AS-IS as Markdown — keep each "
          "line on its OWN line, do not wrap in a code block, do not reword or reorder. The spot, "
