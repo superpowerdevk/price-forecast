@@ -31,6 +31,130 @@ import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 
+_CARD_TEMPLATE = r'''<div id="fc-root"></div>
+<style>#fc-root{--bg:#0d1117;--card:#0f141a;--line:#1f2630;--txt:#e6edf3;--mut:#8b949e;--dim:#6e7681;--grn:#3fb950;--red:#f85149;--amb:#d29922;font-family:ui-sans-serif,system-ui,-apple-system,sans-serif;color:var(--txt);background:var(--bg);border:1px solid #1f2630;border-radius:16px;padding:16px;max-width:780px;margin:0 auto;box-sizing:border-box}#fc-root *{box-sizing:border-box}.fc-hd{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap}.fc-nm{font-size:18px;font-weight:700}.fc-sub{font-size:12px;color:var(--mut);margin-top:2px}.fc-spot{font-size:18px;font-weight:700;text-align:right}.fc-pill{display:inline-block;margin-top:6px;padding:4px 12px;border-radius:8px;font-size:13px;font-weight:700;letter-spacing:.3px}.fc-confwrap{margin:14px 0 4px}.fc-confbar{height:6px;border-radius:4px;background:#21262d;overflow:hidden}.fc-conffill{height:100%;border-radius:4px}.fc-conflab{display:flex;justify-content:space-between;font-size:11px;color:var(--mut);margin-top:4px}.fc-sec{font-size:12px;color:var(--mut);font-weight:600;margin:16px 0 6px}.fc-chart{position:relative;width:100%}.fc-grid{display:grid;gap:10px}.fc-tiles{grid-template-columns:repeat(2,1fr)}.fc-gauges{grid-template-columns:repeat(2,1fr)}@media(min-width:560px){.fc-tiles{grid-template-columns:repeat(4,1fr)}.fc-gauges{grid-template-columns:repeat(4,1fr)}}.fc-tile{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 12px}.fc-tlab{font-size:11px;color:var(--mut)}.fc-tval{font-size:15px;font-weight:600;margin-top:3px}.fc-g{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 6px 8px;text-align:center;cursor:pointer;transition:border-color .15s}.fc-g:hover{border-color:#3a4453}.fc-glab{font-size:11px;color:var(--mut);margin-top:2px}.fc-gtag{font-size:11px;font-weight:600;margin-top:1px}.fc-foot{font-size:10.5px;color:var(--dim);margin-top:14px;line-height:1.4}.fc-tip{position:absolute;pointer-events:none;background:#161b22;border:1px solid #30363d;border-radius:8px;padding:6px 9px;font-size:11px;color:var(--txt);opacity:0;transition:opacity .1s;white-space:nowrap;z-index:5;transform:translate(-50%,-110%)}</style>
+<script>(function(){
+var D=__DATA__;
+var root=document.getElementById('fc-root');
+var up=D.direction==='up', acc=up?'#3fb950':'#f85149';
+var accDim=up?'rgba(63,185,80,.16)':'rgba(248,81,73,.16)';
+var sig=(D.signal||'Neutral'), sl=sig.toLowerCase();
+var sigCol=sl.indexOf('buy')>=0?'#3fb950':(sl.indexOf('sell')>=0?'#f85149':'#d29922');
+var sigBg=sl.indexOf('buy')>=0?'rgba(63,185,80,.14)':(sl.indexOf('sell')>=0?'rgba(248,81,73,.14)':'rgba(210,153,34,.14)');
+function emit(ev,p){try{if(typeof genie!=='undefined'&&genie.emit)genie.emit(ev,p);}catch(e){}}
+function esc(s){return String(s).replace(/[&<>]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;'}[c];});}
+function ccy(v){return D.ccy+Number(v).toLocaleString(undefined,{maximumFractionDigits:(Math.abs(v)<5?4:0)});}
+function gaugeSVG(score,col){
+var R=24,C=2*Math.PI*R,off=C*(1-0.75*score/100);
+return '<svg width="62" height="40" viewBox="0 0 62 50">'
++'<circle cx="31" cy="31" r="'+R+'" fill="none" stroke="#21262d" stroke-width="5" stroke-dasharray="'+(C*0.75)+' '+C+'" stroke-linecap="round" transform="rotate(135 31 31)"/>'
++'<circle cx="31" cy="31" r="'+R+'" fill="none" stroke="'+col+'" stroke-width="5" stroke-dasharray="'+(C*0.75*score/100)+' '+C+'" stroke-linecap="round" transform="rotate(135 31 31)"/>'
++'<text x="31" y="35" fill="#e6edf3" font-size="15" font-weight="600" text-anchor="middle">'+score+'</text></svg>';
+}
+function dtag(s){return s<40?'Weak':(s<60?'Neutral':'Strong');}
+function rtag(s){return s<40?'Low':(s<65?'Elevated':'High');}
+function stag(s){return s<40?'Bearish':(s<60?'Mixed':'Bullish');}
+function gcol(kind,s){if(kind==='risk')return s<40?'#3fb950':(s<65?'#d29922':'#f85149');return s<40?'#f85149':(s<60?'#d29922':'#3fb950');}
+var sc=D.scores||{};
+var gauges=[
+{k:'direction',n:'Direction',v:sc.direction,t:dtag(sc.direction)},
+{k:'momentum',n:'Momentum',v:sc.momentum,t:dtag(sc.momentum)},
+{k:'risk',n:'Risk',v:sc.risk,t:rtag(sc.risk)},
+{k:'sentiment',n:'Sentiment',v:D.sentiment,t:stag(D.sentiment)}
+];
+var gHTML=gauges.map(function(g,i){var c=gcol(g.k,g.v);
+return '<div class="fc-g" data-gi="'+i+'">'+gaugeSVG(g.v,c)
++'<div class="fc-glab">'+g.n+'</div><div class="fc-gtag" style="color:'+c+'">'+g.t+'</div></div>';}).join('');
+var chg=Number(D.exp_change_pct||0);
+var tiles=[
+{l:'Spot',v:ccy(D.spot),c:'#e6edf3'},
+{l:'Exp. close',v:ccy(D.exp_close)+' '+(chg>=0?'+':'')+chg.toFixed(1)+'%',c:acc},
+{l:'Proj. range',v:ccy(D.exp_low)+'–'+Number(D.exp_high).toLocaleString(undefined,{maximumFractionDigits:0}),c:'#e6edf3'},
+{l:'Odds ('+D.horizon_days+'d)',v:(up?'▲ ':'▼ ')+(D.prob_up_display||'—')+(up?' up':' dn'),c:'#c9d1d9'}
+];
+var tHTML=tiles.map(function(t){return '<div class="fc-tile"><div class="fc-tlab">'+esc(t.l)+'</div><div class="fc-tval" style="color:'+t.c+'">'+esc(t.v)+'</div></div>';}).join('');
+root.innerHTML=
+'<div class="fc-hd"><div><div class="fc-nm">'+esc(D.name)+'</div><div class="fc-sub">'+esc(D.sub)+'</div></div>'
++'<div><div class="fc-spot">'+ccy(D.spot)+'</div><span class="fc-pill" style="color:'+sigCol+';background:'+sigBg+'">'+esc(sig.toUpperCase())+'</span></div></div>'
++'<div class="fc-confwrap"><div class="fc-confbar"><div class="fc-conffill" style="width:'+D.confidence+'%;background:'+sigCol+'"></div></div>'
++'<div class="fc-conflab"><span>Confidence</span><span>'+D.confidence+'/100</span></div></div>'
++'<div class="fc-sec">Price · '+D.horizon_days+'-day forecast</div>'
++'<div class="fc-chart"><canvas id="fc-cv"></canvas><div class="fc-tip" id="fc-tip"></div></div>'
++'<div class="fc-sec">Projected levels</div><div class="fc-grid fc-tiles">'+tHTML+'</div>'
++'<div class="fc-sec">Analysis breakdown</div><div class="fc-grid fc-gauges">'+gHTML+'</div>'
++'<div class="fc-foot">Kronos estimate · directional signal, NOT advice · no leverage or stop-loss recommended. Markets gap on news the model cannot see.</div>';
+root.querySelectorAll('.fc-g').forEach(function(el){
+el.addEventListener('click',function(){var g=gauges[+el.dataset.gi];emit('gauge_tap',{name:g.n,value:g.v,tag:g.t});flash(el);});
+});
+function flash(el){el.style.borderColor=acc;setTimeout(function(){el.style.borderColor='';},250);}
+var cv=document.getElementById('fc-cv'), tip=document.getElementById('fc-tip');
+var O=D.hist_o||[],H=D.hist_h||[],L=D.hist_l||[],Cl=D.hist_c||[];
+var b=D.bands||{},P10=b.p10||[],P50=b.p50||[],P90=b.p90||[];
+var nf=P50.length;
+var hitboxes=[];
+function draw(){
+var dpr=window.devicePixelRatio||1;
+var W=cv.parentNode.clientWidth, Hgt=Math.max(180,Math.min(300,W*0.5));
+cv.style.width=W+'px';cv.style.height=Hgt+'px';cv.width=W*dpr;cv.height=Hgt*dpr;
+var ctx=cv.getContext('2d');ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,W,Hgt);
+var candles=W>=520;
+var n=Cl.length, padL=42, padR=8, padT=10, padB=18;
+var x0=padL, x1=W-padR, y0=padT, y1=Hgt-padB;
+var histW=(x1-x0)*0.6, fcW=(x1-x0)*0.4;
+var all=H.concat(L,P10,P90).filter(function(v){return v!=null;});
+var mn=Math.min.apply(null,all), mx=Math.max.apply(null,all), pad=(mx-mn)*0.08||1;mn-=pad;mx+=pad;
+var hx=function(i){return x0+(n<=1?0:i/(n-1))*histW;};
+var fx=function(i){return x0+histW+(i/nf)*fcW;};
+var py=function(v){return y0+(mx-v)/(mx-mn)*(y1-y0);};
+ctx.strokeStyle='#1c2128';ctx.fillStyle='#6e7681';ctx.font='10px sans-serif';ctx.textAlign='right';ctx.lineWidth=.5;
+for(var k=0;k<3;k++){var gv=mn+(mx-mn)*(k+0.5)/3,gy=py(gv);ctx.beginPath();ctx.moveTo(x0,gy);ctx.lineTo(x1,gy);ctx.stroke();ctx.fillText(D.ccy+Math.round(gv),x0-4,gy+3);}
+hitboxes=[];
+if(candles){
+var cw=Math.max(2,histW/n*0.62);
+for(var i=0;i<n;i++){var x=hx(i),col=Cl[i]>=O[i]?'#3fb950':'#f85149';
+ctx.strokeStyle=col;ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(x,py(H[i]));ctx.lineTo(x,py(L[i]));ctx.stroke();
+var yt=py(Math.max(O[i],Cl[i])),yb=py(Math.min(O[i],Cl[i]));ctx.fillStyle=col;ctx.fillRect(x-cw/2,yt,cw,Math.max(1,yb-yt));
+hitboxes.push({x:x-cw/2,w:cw,i:i});}
+}else{
+ctx.beginPath();for(var j=0;j<n;j++){var X=hx(j),Y=py(Cl[j]);j?ctx.lineTo(X,Y):ctx.moveTo(X,Y);}
+ctx.strokeStyle='#768390';ctx.lineWidth=1.6;ctx.stroke();
+ctx.lineTo(hx(n-1),y1);ctx.lineTo(hx(0),y1);ctx.closePath();ctx.fillStyle='rgba(110,118,129,.10)';ctx.fill();
+for(var m=0;m<n;m++){hitboxes.push({x:hx(m)-3,w:6,i:m});}
+}
+var jx=hx(n-1),jy=py(D.spot);
+ctx.beginPath();ctx.moveTo(jx,jy);
+for(var a=0;a<nf;a++)ctx.lineTo(fx(a+1),py(P90[a]));
+for(var z=nf-1;z>=0;z--)ctx.lineTo(fx(z+1),py(P10[z]));
+ctx.closePath();ctx.fillStyle=accDim;ctx.fill();
+ctx.beginPath();ctx.moveTo(jx,jy);for(var q=0;q<nf;q++)ctx.lineTo(fx(q+1),py(P50[q]));
+ctx.strokeStyle=acc;ctx.lineWidth=2;ctx.setLineDash([5,3]);ctx.stroke();ctx.setLineDash([]);
+ctx.strokeStyle='#30363d';ctx.lineWidth=.6;ctx.setLineDash([2,3]);ctx.beginPath();ctx.moveTo(jx,y0);ctx.lineTo(jx,y1);ctx.stroke();ctx.setLineDash([]);
+cv._geo={hx:hx,py:py,y0:y0,y1:y1};
+}
+function showTip(cx,cy,html){tip.innerHTML=html;tip.style.left=cx+'px';tip.style.top=cy+'px';tip.style.opacity=1;}
+function hideTip(){tip.style.opacity=0;}
+cv.addEventListener('mousemove',function(e){
+var r=cv.getBoundingClientRect(),mx=e.clientX-r.left;
+for(var i=0;i<hitboxes.length;i++){var hb=hitboxes[i];if(mx>=hb.x&&mx<=hb.x+hb.w){var k=hb.i;
+var oc=Cl[k]>=O[k]?'▲':'▼';
+showTip(hb.x+hb.w/2,cv._geo.py(Math.max(O[k],Cl[k])),'<b>'+oc+' '+D.ccy+Cl[k]+'</b><br>O '+D.ccy+O[k]+' H '+D.ccy+H[k]+'<br>L '+D.ccy+L[k]+' C '+D.ccy+Cl[k]);return;}}
+hideTip();
+});
+cv.addEventListener('mouseleave',hideTip);
+cv.addEventListener('click',function(e){var r=cv.getBoundingClientRect(),mx=e.clientX-r.left;
+for(var i=0;i<hitboxes.length;i++){var hb=hitboxes[i];if(mx>=hb.x&&mx<=hb.x+hb.w){var k=hb.i;emit('candle_tap',{i:k,o:O[k],h:H[k],l:L[k],c:Cl[k]});return;}}});
+draw();
+var rt;window.addEventListener('resize',function(){clearTimeout(rt);rt=setTimeout(draw,120);});
+emit('forecast_rendered',{symbol:D.symbol,signal:D.signal,confidence:D.confidence});
+})();</script>
+'''
+
+def _render_ui_html(payload: dict) -> str:
+    """Self-contained interactive forecast card for the render_ui tool.
+    Responsive (candlesticks >=520px, line chart on mobile); taps/hover on
+    gauges and candles fire genie.emit events."""
+    return _CARD_TEMPLATE.replace('__DATA__', json.dumps(payload, ensure_ascii=False))
+
 KRONOS_URL = os.environ.get(
     "KRONOS_URL", "https://devansh-86031--superclaw-kronos-serve.modal.run"
 ).rstrip("/")
@@ -380,47 +504,72 @@ def cmd_forecast(query: str) -> None:
     if data.get("scores"):
         data["confidence"] = _composite_confidence(data["scores"], data["sentiment"])
 
-    # Prefer the visual SVG report; fall back to the text card if the sidecar
-    # didn't return chart data / scores (older build) or there aren't enough candles.
-    # SuperClaw chat renders markdown images of any size, but shows raw inline SVG
-    # over ~a few KB as escaped text. So deliver the report as a data-URI <img>.
-    svg = _safe(_svg_card, data)
-    card = svg if svg else text_card
-    is_svg = bool(svg)
+    # ---- render_ui interactive card (preferred path) ----
+    card_payload = {
+        "name": name, "sub": sub, "symbol": sym, "ccy": data.get("ccy", "$"),
+        "spot": round(spot, 4), "direction": data.get("direction", "up"),
+        "signal": data.get("signal", "Neutral"),
+        "confidence": int(data.get("confidence", 50)),
+        "sentiment": int(data.get("sentiment", 50)),
+        "scores": data.get("scores", {}),
+        "exp_close": data.get("exp_close"), "exp_high": data.get("exp_high"),
+        "exp_low": data.get("exp_low"), "exp_change_pct": data.get("exp_change_pct", 0.0),
+        "move_pct": data.get("move_pct", 0.0),
+        "prob_up_display": data.get("prob_up_display", "\u2014"),
+        "horizon_days": n,
+        "hist_o": data.get("hist_o", []), "hist_h": data.get("hist_h", []),
+        "hist_l": data.get("hist_l", []), "hist_c": data.get("hist_c", []),
+        "bands": data.get("bands", {}),
+    }
+    has_card = bool(card_payload["scores"] and (card_payload["bands"] or {}).get("p50")
+                    and card_payload["hist_c"])
+    html = _safe(_render_ui_html, card_payload) if has_card else ""
+    conf = int(data.get("confidence", 50))
 
-    card_directive = (
-        ("Everything ABOVE this line is the forecast report, as an inline SVG. Output it AS-IS, "
-         "exactly once, as a raw inline SVG block — do NOT wrap it in a code fence, do NOT "
-         "escape it, do NOT describe or redraw it, and do NOT add a separate text version of the "
-         "numbers. It is the report.")
-        if is_svg else
-        ("Everything ABOVE this line is the forecast card. Print it AS-IS as Markdown — keep each "
-         "line on its OWN line, do not wrap in a code block, do not reword or reorder. The spot, "
-         "odds, expected close/range and path are FINAL — never invent or change a number.")
-    )
-
-    instructions = (
-        "\n\n[AGENT INSTRUCTIONS — do not print this line]\n"
-        f"{card_directive}\n\n"
-        "Then build the rest yourself, BELOW the card:\n\n"
-        "RAW HEADLINES (tag each by likely impact on THIS asset — 🟢 bullish / 🔴 bearish / "
-        "⚪ neutral):\n"
-        f"{hl_block}\n\n"
-        "Render EXACTLY this structure below the card:\n\n"
-        "### 📰 Headlines  ·  🟢 bullish · 🔴 bearish · ⚪ neutral\n"
-        "- 🟢/🔴/⚪ <headline>   (one per headline above — ALWAYS keep that color key in the "
-        "header so users know what the dots mean. If none were fetched, say so in one line.)\n\n"
-        "### ⚖️ Read\n"
-        f"**<Bullish / Bearish / Mixed> over the next ~{n}d.** <one short paragraph that ties the "
-        "Kronos lean + move odds to what the headlines suggest. Plain, descriptive, NO buy/sell "
-        "calls, no price targets beyond the numbers above.>\n"
-        "**Conviction:** 🟢 High / 🟡 Medium / 🔴 Low (pick one, matching the % conviction above)\n\n"
-        "### 👉 What now?\n"
-        "🔮 Forecast another asset — just name it (stock, ETF, index, FX, commodity, or coin).\n\n"
-        "Descriptive only, never financial advice; never fabricate data; if a value isn't above, "
-        "say it's unavailable."
-    )
-    print(card + instructions)
+    if html:
+        out = (
+            "[AGENT INSTRUCTIONS \u2014 do not print this block in chat]\n"
+            "1) You have a `render_ui` tool. Call it ONCE:\n"
+            '   surfaceId: "forecast"\n   mode: "replace"\n'
+            f'   title: "{name} \u00b7 Kronos forecast"\n'
+            "   html: the ENTIRE block between <<<RENDER_UI_HTML>>> and <<<END_HTML>>> below, "
+            "VERBATIM \u2014 do not alter, truncate, re-indent, or wrap it. Do NOT print the HTML in chat.\n"
+            "2) THEN write your chat message as exactly this structure:\n\n"
+            "### \U0001F4F0 Headlines  \u00b7  \U0001F7E2 bullish \u00b7 \U0001F534 bearish \u00b7 \u26AA neutral\n"
+            "- \U0001F7E2/\U0001F534/\u26AA <headline>  (one per headline below; ALWAYS keep this color key)\n\n"
+            "### \u2696\uFE0F Read\n"
+            f"**<Bullish / Bearish / Mixed> over the next ~{n}d.** <one short paragraph tying the Kronos "
+            "lean + move odds to what the headlines suggest. Plain, descriptive, NO buy/sell calls, "
+            "no price targets beyond the card.>\n"
+            f"**Conviction:** read it off the card's confidence ({conf}/100) \u2014 "
+            "\U0001F7E2 High (\u226567) \u00b7 \U0001F7E1 Medium (34\u201366) \u00b7 \U0001F534 Low (\u226433). "
+            "This is OVERALL confidence; the card's Direction gauge is a separate directional dial \u2014 "
+            "do not conflate them.\n\n"
+            "### \U0001F449 What now?\n"
+            "\U0001F52E Forecast another asset \u2014 just name it (stock, ETF, index, FX, commodity, or coin).\n\n"
+            "RAW HEADLINES (tag each by likely impact on THIS asset):\n"
+            f"{hl_block}\n\n"
+            "Descriptive only, never financial advice; never fabricate data.\n"
+            "If (and ONLY if) you have NO render_ui tool, post the PLAIN FALLBACK below in chat instead.\n\n"
+            "<<<RENDER_UI_HTML>>>\n" + html + "\n<<<END_HTML>>>\n\n"
+            "PLAIN FALLBACK (only without render_ui):\n" + text_card
+        )
+        print(out)
+    else:
+        # No chart data (older sidecar / too few candles): text card + headlines.
+        instructions = (
+            "\n\n[AGENT INSTRUCTIONS \u2014 do not print this line]\n"
+            "Everything ABOVE is the forecast card; print it AS-IS as Markdown, each line on its own "
+            "line, never changing a number. Then below it render:\n\n"
+            "### \U0001F4F0 Headlines  \u00b7  \U0001F7E2 bullish \u00b7 \U0001F534 bearish \u00b7 \u26AA neutral\n"
+            "- \U0001F7E2/\U0001F534/\u26AA <headline> (one per headline below; keep the key)\n\n"
+            "### \u2696\uFE0F Read\n"
+            f"**<Bullish / Bearish / Mixed> over ~{n}d.** <short paragraph; descriptive, no buy/sell calls.>\n"
+            f"**Conviction:** match the {conf}/100 confidence \u2014 \U0001F7E2 High \u00b7 \U0001F7E1 Medium \u00b7 \U0001F534 Low\n\n"
+            "### \U0001F449 What now?\n\U0001F52E Forecast another asset \u2014 just name it.\n\n"
+            "RAW HEADLINES:\n" + hl_block + "\n\nNever advice; never fabricate data."
+        )
+        print(text_card + instructions)
 
 
 def main() -> None:
